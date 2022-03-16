@@ -1,10 +1,3 @@
-#define TEXAS
-
-#ifdef TEXAS
-#include "../TExaS Simulation (open with Keil uVision4)/TExaS.h"
-#include "../TExaS Simulation (open with Keil uVision4)/tm4c123gh6pm.h"
-#endif
-
 #include <stdint.h> 
 #include <stdbool.h>
 #include <inc/hw_memmap.h>
@@ -13,43 +6,44 @@
 #include <driverlib/systick.h>
 #include <driverlib/interrupt.h>
 
-// To switch context...
+// To switch context... Lab 1 Version
 // 1. Put a breakpoint here (in the ++),
 // 2. See where SP points at once it hits,
 // 3. Change 7th register in stack (PC) with the other function's address
+//
+// To switch context... Lab 2 Version
+// 0. Put both stack pointers on watch,
+// 1. Put a breakpoint here (in the ++),
+// 2. Put in the CPU's SP the SP of either task,
+// That's it. Now, when switching to the other one...
+// 1. Put a breakpoint here (in the ++),
+// 2. Take the CPU's SP and put it in the SP of the task that was running
+// 3. Put in the CPU's SP the other task's SP
+//
 // Note that in Keil the disassembly window gets auto-scrolled to match the code
 // This way you could scroll down to the function you want to go to in both windows
 static volatile uint32_t global_100ms_tick_count;
-void systick_timeout_ISR(void) {
-    global_100ms_tick_count++;
-}
-void SysTick_Handler(void) { systick_timeout_ISR(); }
+void SysTick_Timeout_ISR(void) { global_100ms_tick_count++; }
+void SysTick_Handler(void) { SysTick_Timeout_ISR(); }
 
-void SYSTICK_init(void) {
+void SysTick_Init(void) {
     SysTickDisable();
     SysTickIntDisable();
-    SysTickIntRegister(systick_timeout_ISR);
+    SysTickIntRegister(SysTick_Timeout_ISR);
     SysTickPeriodSet(100 * 16000 - 1);
     SysTickIntEnable();
     SysTickEnable();
 }
 
-void PORTF_init(void) {
-    #ifndef TEXAS
+void PORTF_Init(void) {
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
     while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
-    #endif
-    #ifdef TEXAS
-    volatile unsigned long delay;
-    SYSCTL_RCGC2_R |= 0x00000020;
-    delay = SYSCTL_RCGC2_R;
-    #endif
     GPIOUnlockPin(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4);
     GPIOPinTypeGPIOInput(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4);
     GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
 }
 
-void SYSTICK_delay(uint32_t req_100ms_tick_count) {
+void SysTick_Delay(uint32_t req_100ms_tick_count) {
     // Set the current global no. of ticks as the starting value
     // This must be done in a critical section
     IntMasterDisable();
@@ -66,39 +60,57 @@ void SYSTICK_delay(uint32_t req_100ms_tick_count) {
     while (current_value - starting_value < req_100ms_tick_count);
 }
 
+uint32_t blink_red_task_sf[40] = {0}; // Stack Frame for red LED blinking
+uint32_t* blink_red_task_sp = &blink_red_task_sf[40]; // Its Stack Pointer
+// So now we have a pointer pointing at the end of an array of 40 registers
 void blink_red_task(void) {
     while (true) {
         GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0xFF);
-        SYSTICK_delay(5); // delay 500ms busy-wait
+        SysTick_Delay(5); // delay 500ms busy-wait
         GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0x00);
-        SYSTICK_delay(5); // delay 500ms busy-wait
+        SysTick_Delay(5); // delay 500ms busy-wait
     }
 }
 
+uint32_t blink_blue_task_sf[40] = {0}; // Stack Frame for blue LED blinking
+uint32_t* blink_blue_task_sp = &blink_blue_task_sf[40]; // Its Stack Pointer
 void blink_blue_task(void) {
     while (true) {
         GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, 0xFF);
-        SYSTICK_delay(10); // delay 1000ms busy-wait
+        SysTick_Delay(10); // delay 1000ms busy-wait
         GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, 0x00);
-        SYSTICK_delay(10); // delay 1000ms busy-wait
+        SysTick_Delay(10); // delay 1000ms busy-wait
     }
+}
+
+void Fabricate_Frame(void (*func)(void), uint32_t** pointer) {
+    *(--*pointer) = 1<<24;  // xPSR (bit #24 must be set); Datasheet says...
+    /* EPSR Thumb State
+    This bit indicates the Thumb state and should always be set.
+    Attempting to execute instructions when this bit is clear results in a fault or lockup.
+    The value of this bit is only meaningful when accessing PSR or EPSR. */
+    *(--*pointer) = (uint32_t)func; // PC
+    *(--*pointer) = 0x13; // LR
+    *(--*pointer) = 0x12; // R12
+    *(--*pointer) = 0x03; // R3
+    *(--*pointer) = 0x02; // R2
+    *(--*pointer) = 0x01; // R1
+    *(--*pointer) = 0x00; // R0
 }
 
 int main() {
     IntMasterEnable();
+    SysTick_Init();
+    PORTF_Init();
     
-    #ifdef TEXAS
-    TExaS_Init(SW_PIN_PF40, LED_PIN_PF321);
-    #endif
+    Fabricate_Frame(blink_red_task, &blink_red_task_sp);
+    Fabricate_Frame(blink_blue_task, &blink_blue_task_sp);
     
-    SYSTICK_init();
-    PORTF_init();
+    // uint8_t volatile anti_optimization = 42;
+    // if (anti_optimization) blink_red_task();
+    // else blink_blue_task();
     
-    uint8_t volatile anti_optimization = 42;
-    if (anti_optimization) blink_red_task();
-    else blink_blue_task();
-    
-    while(true); // "infinite loop that should never be reached"
+    while(true);
 }    
 
 /*
