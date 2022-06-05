@@ -7,6 +7,7 @@
 #include <driverlib/gpio.h>
 #include <driverlib/sysctl.h>
 #include <driverlib/interrupt.h>
+#include <driverlib/pin_map.h>
 
 #include <FreeRTOS.h>
 #include <semphr.h>
@@ -49,10 +50,11 @@ int main(void)
     // Initializations for sensor, LCD, and port F
     initSensor();
     LCD_init();
-    SYSCTL_RCGCGPIO_R	|= 0x20;                    // turn on bus clock for GPIOF
-    GPIO_PORTF_DIR_R	|= 0x08;                    //set GREEN pin as a digital output pin
-    GPIO_PORTF_DEN_R 	|= 0x08;                    // Enable PF3 pin as a digital pin
-   
+    SYSCTL_RCGCGPIO_R	|= (1 << 4);                    // turn on bus clock for GPIOF
+    GPIO_PORTE_DIR_R	|= (1 << 4);                    //set GREEN pin as a digital output pin
+    GPIO_PORTE_DEN_R 	|= (1 << 4);                    // Enable PF3 pin as a digital pin
+
+	
 	// Queue definitions
     xLCDQueue = xQueueCreate(1, sizeof(Message));
 	xUARTQueue = xQueueCreate(1, sizeof(uint32_t));
@@ -102,18 +104,18 @@ void task1(void *pvParameters)
 		
         ADC_value = readSensor();                   // Read ADC Channel 2
         mv = ADC_value * 3300.0 / 4096.0;           // in mv
-        //mv = (mv - 500.0) / 10.0;                 // Temp in C
+        mv = (mv / 3300) * 80.0;                 // Temp in C
         temperature = (int)mv;                      // Temp as integer
 
         // If cold, turn LED on
         if (temperature < setpoint)
         {
-			GPIO_PORTF_DATA_R  = 0x08;
+			GPIO_PORTE_DATA_R  = (1 << 4);
         }
         // If hot, turn LED off
         else
         {
-			GPIO_PORTF_DATA_R  = 0x00;
+			GPIO_PORTE_DATA_R  = 0x00;
         }
 		
 		sprintf(msg.cur_temp, "%d", temperature);
@@ -133,6 +135,8 @@ void task1(void *pvParameters)
             alarm = 0;
             xQueueSend(xBuzzerQueue, &alarm, 0);
         }
+		
+		vTaskDelay(500);
     }
 }
 
